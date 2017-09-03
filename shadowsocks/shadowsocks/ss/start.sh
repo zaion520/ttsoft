@@ -574,12 +574,15 @@ ln_conf(){
 #--------------------------------------------------------------------------------------
 nat_auto_start(){
 	echo_date 添加nat-start触发事件...
+	rm -rf $KSROOT/init.d/N98shadowsocks.sh
+
 	[ ! -L "$KSROOT/init.d/N98shadowsocks.sh" ] && ln -sf $KSROOT/ss/start.sh "$KSROOT"/init.d/N98shadowsocks.sh
 }
 #--------------------------------------------------------------------------------------
 wan_auto_start(){
 	echo_date 加入开机自动启动...
-	[ ! -L "$KSROOT/init.d/N98shadowsocks.sh" ] && ln -sf $KSROOT/scripts/ss_config.sh "$KSROOT"/init.d/N98shadowsocks.sh
+	rm -rf $KSROOT/init.d/S98shadowsocks.sh
+	[ ! -L "$KSROOT/init.d/S98shadowsocks.sh" ] && ln -sf $KSROOT/scripts/ss_config.sh "$KSROOT"/init.d/S98shadowsocks.sh
 }
 
 #=======================================================================================
@@ -631,14 +634,14 @@ flush_ipset(){
 }
 
 remove_redundant_rule(){
-	ip_rule_exist=`/usr/sbin/ip rule show | grep "fwmark 0x1/0x1 lookup 310" | grep -c 310`
-	#ip_rule_exist=`ip rule show | grep "fwmark 0x1/0x1 lookup 310" | grep -c 300`
+	ip_rule_exist=`/usr/sbin/ip rule show | grep "fwmark 0x7 lookup 100" | grep -c 100`
+	
 	if [ ! -z "ip_rule_exist" ];then
 		echo_date 清除重复的ip rule规则.
 		until [ "$ip_rule_exist" = 0 ]
 		do 
-			#ip rule del fwmark 0x07 table 310
-			/usr/sbin/ip rule del fwmark 0x07 table 310 pref 789
+	
+			/usr/sbin/ip rule del fwmark 0x07 table 100
 			ip_rule_exist=`expr $ip_rule_exist - 1`
 		done
 	fi
@@ -646,7 +649,7 @@ remove_redundant_rule(){
 
 remove_route_table(){
 	echo_date 删除ip route规则.
-	/usr/sbin/ip route del local 0.0.0.0/0 dev lo table 310 >/dev/null 2>&1
+	/usr/sbin/ip route del local 0.0.0.0/0 dev lo table 100 >/dev/null 2>&1
 }
 
 # creat ipset rules
@@ -789,6 +792,15 @@ apply_nat_rules(){
 	echo_date 写入iptables规则到nat表中...
 	# 创建SHADOWSOCKS nat rule
 	iptables -t nat -N SHADOWSOCKS
+	iptables -t nat -I PREROUTING -p tcp -j SHADOWSOCKS
+	iptables -t nat -A SHADOWSOCKS -d 0.0.0.0/8 -j RETURN
+	iptables -t nat -A SHADOWSOCKS -d 10.0.0.0/8 -j RETURN
+	iptables -t nat -A SHADOWSOCKS -d 127.0.0.0/8 -j RETURN
+	iptables -t nat -A SHADOWSOCKS -d 169.254.0.0/16 -j RETURN
+	iptables -t nat -A SHADOWSOCKS -d 172.16.0.0/12 -j RETURN
+	iptables -t nat -A SHADOWSOCKS -d 192.168.0.0/16 -j RETURN
+	iptables -t nat -A SHADOWSOCKS -d 224.0.0.0/4 -j RETURN
+	iptables -t nat -A SHADOWSOCKS -d 240.0.0.0/4 -j RETURN
 	# IP/cidr/白域名 白名单控制（不走ss）
 	iptables -t nat -A SHADOWSOCKS -p tcp -m set --match-set white_list dst -j RETURN
 	#-----------------------FOR GLOABLE---------------------
@@ -819,10 +831,12 @@ apply_nat_rules(){
 	iptables -t nat -A SHADOWSOCKS_GAM -p tcp -m set ! --match-set chnroute dst -j REDIRECT --to-ports 3333
 
 	#[ "$mangle" == "1" ] && load_tproxy
-	[ "$mangle" == "1" ] && /usr/sbin/ip rule add fwmark 0x07 table 310 pref 789
-	[ "$mangle" == "1" ] && /usr/sbin/ip route add local 0.0.0.0/0 dev lo table 310
+	[ "$mangle" == "1" ] && /usr/sbin/ip rule add fwmark 0x07 table 100
+	[ "$mangle" == "1" ] && /usr/sbin/ip route add local 0.0.0.0/0 dev lo table 100
 	# 创建游戏模式udp rule
 	[ "$mangle" == "1" ] && iptables -t mangle -N SHADOWSOCKS
+
+
 	# IP/cidr/白域名 白名单控制（不走ss）
 	[ "$mangle" == "1" ] && iptables -t mangle -A SHADOWSOCKS -p udp -m set --match-set white_list dst -j RETURN
 	# 创建游戏模式udp rule
@@ -866,17 +880,7 @@ chromecast(){
 # =======================================================================================================
 #---------------------------------------------------------------------------------------------------------
 load_nat(){
-	nat_ready=$(iptables -t nat -L PREROUTING -v -n --line-numbers|grep WANPREROUTING|grep -v destination)
-	i=120
-	until [ -n "$nat_ready" ]
-	do
-	    i=$(($i-1))
-	    if [ "$i" -lt 1 ];then
-	        echo_date "错误：不能正确加载nat规则!"
-	        exit
-	    fi
-	    sleep 1
-	done
+
 	echo_date "加载nat规则!"
 	flush_nat
 	flush_ipset
@@ -963,16 +967,7 @@ start_all)
 	write_numbers
 	echo_date ------------------------- shadowsocks 启动完毕 -------------------------
 	;;
-start_nat)
-	flush_nat
-	flush_ipset
-	remove_redundant_rule
-	remove_route_table
-	creat_ipset
-	add_white_black_ip
-	apply_nat_rules
-	chromecast
-	;;
+
 stop)
 	echo_date ---------------------- Advanced Tomato 固件 shadowsocks -----------------------
 	restore_conf
@@ -984,5 +979,16 @@ stop)
 	kill_process
 	kill_cron_job
 	echo_date ------------------------- shadowsocks 成功关闭 -------------------------
+	;;
+
+start_nat)
+	flush_nat
+	flush_ipset
+	remove_redundant_rule
+	remove_route_table
+	creat_ipset
+	add_white_black_ip
+	apply_nat_rules
+	chromecast
 	;;
 esac
